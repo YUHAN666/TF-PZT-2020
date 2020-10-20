@@ -1,11 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Tue Sep 17 10:22:16 2019
-
-@author: RL
-"""
-
-
 
 from tensorflow.keras.models import load_model
 import tensorflow as tf

@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Tue Feb 11 14:58:20 2020
-
-@author: RL
+Implementation of MixNet
 """
 
 import tensorflow as tf

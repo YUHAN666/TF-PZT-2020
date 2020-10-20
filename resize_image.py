@@ -1,3 +1,7 @@
+"""
+Resize images in given dir
+"""
+
 import pathlib
 import cv2
 from config import IMAGE_SIZE

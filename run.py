@@ -3,28 +3,29 @@ import argparse
 from agent import Agent
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
+
 # 默认参数(Notes : some params are disable )
 DefaultParam = {
     "mode": "testing",  # 模式  {"training","testing" }
-    "epochs_num": 400,
-    "batch_size": 1,
-    "batch_size_inference": 1,
-    "learn_rate": 0.001,
-    "momentum": 0.9,                 # 优化器参数(disable)
-    "data_dir": "F:/CODES/FAST-SCNN/DATA/1pzt/",  # 数据路径
+    "epochs_num": 20,
+    "batch_size": 4,
+    "batch_size_inference": 2,
+    "learn_rate": 0.0003,
+    "momentum": 0.9,                 # BN momentum
+    "data_dir": "E:/CODES/FAST-SCNN/DATA/surplus7/",  # 数据路径
     # "data_dir": "D:/DL/data_set/test/",
     "checkPoint_dir": "checkpoint",  # 模型保存路径
     "Log_dir": "Log",  # 日志打印路径
     "valid_ratio": 0,  # 数据集中用来验证的比例  (disable)
     "valid_frequency": 1,  # 每几个周期验证一次  (disable)
     "save_frequency": 1,  # 几个周期保存一次模型
-    "max_to_keep": 50,  # 最多保存几个模型
+    "max_to_keep": 10,  # 最多保存几个模型
     "pb_Mode_dir": "pbMode",
     "b_restore": True,  # 导入参数
     "b_saveNG": True,  # 测试时是否保存错误的样本  (disable)
     "tensorboard_logdir": "./tensorboard",
     "backbone": "ghostnet",
-    "segmentation_head": "bifpn"
+    "neck": "bifpn"
 }
 
 
@@ -39,7 +40,7 @@ def parse_arguments():
         "--train_segmentation",
         action="store_true",
         help="Define if we wanna to train the segmentation part",
-        default=False
+        default=True
     )
     parser.add_argument(
         "--train_decision",
@@ -47,6 +48,7 @@ def parse_arguments():
         help="Define if we wanna to train the decision part",
         default=False
     )
+
     parser.add_argument(
         "--pb",
         action="store_true",
@@ -63,13 +65,13 @@ def parse_arguments():
         "--visualization",
         action="store_true",
         help="Define if we wanna visualize the segmentation output",
-        default=True
+        default=False
     )
     parser.add_argument(
         "--anew",
         action="store_true",
         help="Define if we try to start from scratch  instead of  loading a checkpoint file from the save folder",
-        default=True
+        default=False
     )
     parser.add_argument(
         "-vr",

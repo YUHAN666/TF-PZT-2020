@@ -5,7 +5,18 @@ from tensorflow.python.ops import math_ops
 import os
 import cv2
 from tqdm import tqdm
+from skimage import exposure
 slim=tf.contrib.slim
+
+def rotate(image, angle, center=None, scale=1.0): #1
+    (h, w) = image.shape[:2] #2
+    if center is None: #3
+        center = (w // 2, h // 2) #4
+
+    M = cv2.getRotationMatrix2D(center, angle, scale) #5
+
+    rotated = cv2.warpAffine(image, M, (w, h)) #6
+    return rotated #7
 
 
 kernel_initializer = tf.contrib.layers.variance_scaling_initializer(2.0)
@@ -26,8 +37,8 @@ def SELayer(x, out_dim, se_dim, data_format, name):
 		excitation = tf.layers.Conv2D(out_dim, 1, strides=1, data_format=data_format,
 									  kernel_initializer=kernel_initializer, padding='same', name=name + "_fc2")(
 			excitation)
-		excitation = tf.nn.sigmoid(excitation,name = name+'_sigmoid')
-		# excitation = tf.clip_by_value(excitation, 0, 1, name=name + '_hsigmoid')
+		# excitation = tf.nn.sigmoid(excitation, name=name+'_sigmoid')
+		excitation = tf.clip_by_value(excitation, 0, 1, name=name + '_hsigmoid')
 
 		scale = x * excitation
 
@@ -137,6 +148,7 @@ def pyramid_pooling_block(input_tensor, nOut, bin_sizes, training, bn_momentum, 
 	x = tf.concat(concat_list, axis=axis)
 	x = conv_block(x, 'conv', nOut, (1, 1), strides=(1, 1), training=training, bn_momentum=bn_momentum,
 				   name=name + 'conv', padding='valid', data_format=data_format)
+
 	return x
 
 
@@ -252,7 +264,7 @@ def DecisionNet(feature, mask, scope, is_training, bn_momentum=0.99, num_classes
 
 		vector = tf.concat([vector1, vector2, vector3, vector4], axis=channel_axis)
 		vector = tf.squeeze(vector, axis=reduction_indices)
-		logits = slim.fully_connected(vector, num_classes, activation_fn=None)
+		logits = tf.layers.dense(vector, num_classes, use_bias=False)
 
 		output = tf.argmax(logits, axis=1, name='argmax')
 		return logits, output
@@ -260,298 +272,192 @@ def DecisionNet(feature, mask, scope, is_training, bn_momentum=0.99, num_classes
 
 
 """---------------------------------------Data 	Manager----------------------------------------------------"""
-
-class DataManager(object):
-	def __init__(self, imageList, maskList, shuffle=True):
-
-		self.shuffle = shuffle
-		self.image_list = imageList
-		self.mask_list = maskList
-		self.data_size = len(imageList)
-		self.batch_size = 1
-		self.number_batch = int(np.floor(len(self.image_list) / self.batch_size))
-		self.next_batch = self.get_next()
-
-	def get_next(self):
-		dataset = tf.data.Dataset.from_generator(self.generator, (tf.float32, tf.float32, tf.float32, tf.string))
-		dataset = dataset.repeat()
-
-		dataset = dataset.batch(self.batch_size)
-		iterator = dataset.make_one_shot_iterator()
-		out_batch = iterator.get_next()
-		return out_batch
-
-	def generator(self):
-		rand_index = np.arange(len(self.image_list))
-		np.random.shuffle(rand_index)
-		for index in range(len(self.image_list)):
-			image_path = self.image_list[rand_index[index]]
-			mask_path = self.mask_list[rand_index[index]]
-			if image_path.split('/')[-1].split('_')[0] == 'n':
-				label = np.array([0.0])
-			else:
-				label = np.array([1.0])
-
-			image, mask = self.read_data(image_path, mask_path)
-			image = image / 255
-			mask = mask / 255
-			mask = (np.array(mask[:, :, np.newaxis]))
-			image = (np.array(image[np.newaxis, :, :]))
-			# image = np.transpose(image, [2, 0, 1])
-
-			yield image, mask, label, image_path
-
-	def read_data(self, image_path, mask_path):
-
-		img = cv2.imread(image_path, 0)  # /255.#read the gray image
-		img = cv2.resize(img, (IMAGE_SIZE[1], IMAGE_SIZE[0]))
-		msk = cv2.imread(mask_path, 0)  # /255.#read the gray image
-
-		msk = cv2.resize(msk, (IMAGE_SIZE[1], IMAGE_SIZE[0]))
-		return img, msk
-
-
-def listData_train(data_dir):
-	image_dirs = [x[2] for x in os.walk(data_dir + 'train_image/')][0]
-	images_train = []
-	masks_train = []
-
-	for i in range(len(image_dirs)):
-		image_dir = image_dirs[i]
-		image_path = data_dir + 'train_image/' + image_dir
-		mask_path = data_dir + 'train_mask/' + image_dir
-		images_train.append(image_path)
-		masks_train.append(mask_path)
-	return images_train, masks_train
-
-
-def listData_val(data_dir):
-	image_dirs = [x[2] for x in os.walk(data_dir + 'val_image/')][0]
-	images_val = []
-	masks_val = []
-
-	for i in range(len(image_dirs)):
-		image_dir = image_dirs[i]
-		image_path = data_dir + 'val_image/' + image_dir
-		mask_path = data_dir + 'val_mask/' + image_dir
-		images_val.append(image_path)
-		masks_val.append(mask_path)
-	return images_val, masks_val
-
-def listData_test(data_dir):
-	image_dirs = [x[2] for x in os.walk(data_dir + 'val_image/')][0]
-	images_val = []
-	masks_val = []
-
-	for i in range(len(image_dirs)):
-		image_dir = image_dirs[i]
-		image_path = data_dir + 'test_image/' + image_dir
-		mask_path = data_dir + 'test_mask/' + image_dir
-		images_val.append(image_path)
-		masks_val.append(mask_path)
-	return images_val, masks_val
-
-
-data_dir = "F:/CODES/FAST-SCNN/DATA/1pzt/"
-image_list_train, mask_list_train = listData_train(data_dir)
-image_list_valid, mask_list_valid = listData_val(data_dir)
-image_list_test, mask_list_test = listData_test(data_dir)
-
-DataManager_train = DataManager(image_list_train, mask_list_train)
-DataManager_valid = DataManager(image_list_valid, mask_list_valid, shuffle=False)
-DataManager_test = DataManager(image_list_test, mask_list_test, shuffle=False)
-
-
-
-"""-----------------------------------------train  segmentation-----------------------------------------------"""
-
-sess = tf.Session()
-checkPoint_dir = "checkpoint"
-with sess.as_default():
-	image_input = tf.placeholder(tf.float32, shape=(1, 1, IMAGE_SIZE[0], IMAGE_SIZE[1]), name='Image')
-	label = tf.placeholder(tf.float32, shape=(1, 1), name='Label')
-	Mask = tf.placeholder(tf.float32, shape=(1, IMAGE_SIZE[0], IMAGE_SIZE[1], 1), name='mask')
-	is_training_seg = tf.placeholder(tf.bool, name='is_training_seg')
-	is_training_dec = tf.placeholder(tf.bool, name='is_training_dec')
-
-	features, logits_pixel, mask = SegmentNet(image_input, 'segment', is_training_seg, drop_rate=0.5,
-											  data_format=DATA_FORMAT, bn_momentum=0.9)
-
-	logits_class, output_class = DecisionNet(features, mask, 'decision', is_training_dec,
-											 data_format=DATA_FORMAT, bn_momentum=0.9)
-
-	decision_out = tf.nn.sigmoid(logits_class, name='decision_out')
-
-	#        logits_pixel=tf.reshape(logits_pixel,[self.__batch_size,-1])
-	#        PixelLabel_reshape=tf.reshape(PixelLabel,[self.__batch_size,-1])
-
-	if DATA_FORMAT == 'channels_first':
-		logits_pixel = tf.transpose(logits_pixel, [0, 2, 3, 1])  # NCHW->NHWC
-	loss_pixel = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=logits_pixel, labels=Mask))
-	loss_class = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=logits_class, labels=label))
-	loss_total = loss_pixel + loss_class
-
-	optimizer = tf.train.AdamOptimizer(0.001)
-	train_var_list = [v for v in tf.trainable_variables()]
-	train_segment_var_list = [v for v in tf.trainable_variables() if 'segment' in v.name]
-	train_decision_var_list = [v for v in tf.trainable_variables() if 'decision' in v.name]
-
-	update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-
-	updata_ops_segment = [v for v in update_ops if 'segment' in v.name]
-	updata_ops_decision = [v for v in update_ops if 'decision' in v.name]
-
-	with tf.control_dependencies(updata_ops_segment):
-		optimize_segment = optimizer.minimize(loss_pixel, var_list=train_segment_var_list)
-
-	with tf.control_dependencies(updata_ops_decision):
-		optimize_decision = optimizer.minimize(loss_class, var_list=train_decision_var_list)
-
-	with tf.control_dependencies(update_ops):
-		optimize_total = optimizer.minimize(loss_total, var_list=train_var_list)
-
-	sess.run(tf.global_variables_initializer())
-	var_list = tf.trainable_variables()
-	g_list = tf.global_variables()
-
-	bn_moving_vars = [g for g in g_list if 'moving_mean' in g.name]
-	bn_moving_vars += [g for g in g_list if 'moving_variance' in g.name]
-	var_list += bn_moving_vars
-	saver = tf.train.Saver(var_list)
-	ckpt = tf.train.latest_checkpoint(checkPoint_dir)
-	if ckpt:
-		step = int(ckpt.split('-')[1])
-		saver.restore(sess, ckpt)
-		print('Restoring from epoch:{}'.format(step))
-
-
-with sess.as_default():
-	# sess.run(tf.global_variables_initializer())
-	seg_epochs = 15
-	print('Start training segmentation for {} epoches'.format(seg_epochs))
-	best_loss = 10000
-	for i in range(seg_epochs):
-		print('Epoch {}:'.format(i))
-		with tqdm(total=DataManager_train.number_batch) as pbar:
-			iter_loss = 0.0
-			num_step = 0.0
-			accuracy = 0.0
-			for batch in range(DataManager_train.number_batch):
-				img_batch, mask_batch, label_batch, _ = sess.run(DataManager_train.next_batch)
-
-				_, loss_value_batch = sess.run([optimize_segment,
-												 loss_pixel],
-												feed_dict={image_input: img_batch,
-														   Mask: mask_batch,
-														   label: label_batch,
-														   is_training_seg: True,
-														   is_training_dec: False})
-				iter_loss += loss_value_batch
-				num_step = num_step + 1
-				pbar.update(1)
-		pbar.close()
-		iter_loss /= num_step
-
-		print('start validing segmentation')
-		val_loss = 0.0
-		num_step = 0.0
-
-		for batch in range(DataManager_valid.number_batch):
-			img_batch, mask_batch, label_batch, _ = sess.run(DataManager_valid.next_batch)
-
-			total_loss_value_batch = sess.run(loss_pixel,
-											  feed_dict={image_input: img_batch,
-														 Mask: mask_batch,
-														 label: label_batch,
-														 is_training_seg: False,
-														 is_training_dec: False})
-			num_step = num_step + 1
-			val_loss += total_loss_value_batch
-		val_loss /= num_step
-
-		print('train_loss:{},   val_loss:{}'.format(iter_loss, val_loss))
-		saver.save(sess, os.path.join(checkPoint_dir, 'ckp'), global_step=seg_epochs)
-
-"""-----------------------------------------train  decision----------------------------------------------------------"""
-with sess.as_default():
-	dec_epochs = 5
-	with sess.as_default():
-		print('Start training decision for {} epoches'.format(dec_epochs))
-		best_loss = 10000
-		for i in range(seg_epochs, dec_epochs+seg_epochs):
-			print('Epoch {}:'.format(i))
-			with tqdm(total=DataManager_train.number_batch) as pbar:
-				iter_loss = 0.0
-				num_step = 0.0
-				acc = 0
-				for batch in range(DataManager_train.number_batch):
-					img_batch, mask_batch, label_batch, _ = sess.run(DataManager_train.next_batch)
-
-					_, loss_value_batch, decision = sess.run([optimize_decision,
-															  loss_class,
-															  decision_out],
-												   feed_dict={image_input: img_batch,
-															  Mask: mask_batch,
-															  label: label_batch,
-															  is_training_seg: False,
-															  is_training_dec: True})
-					if decision[0][0] >= 0.5 and label_batch[0][0] == 1:
-						step_accuracy = 1
-					elif decision[0][0] < 0.5 and label_batch[0][0] == 0:
-						step_accuracy = 1
-					else:
-						step_accuracy = 0
-					acc = acc + step_accuracy
-					iter_loss += loss_value_batch
-					num_step = num_step + 1
-					pbar.update(1)
-				iter_loss /= num_step
-				acc /= num_step
-			pbar.close()
-
-			print('start validing decision')
-			val_loss = 0.0
-			num_step = 0.0
-			accuracy = 0.0
-			for batch in range(DataManager_valid.number_batch):
-				img_batch, mask_batch, label_batch, _ = sess.run(DataManager_valid.next_batch)
-
-				total_loss_value_batch, decision = sess.run([loss_class, decision_out],
-												  feed_dict={image_input: img_batch,
-															 Mask: mask_batch,
-															 label: label_batch,
-															 is_training_seg: False,
-															 is_training_dec: False})
-				if decision[0][0] >= 0.5 and label_batch[0][0] == 1:
-					step_accuracy = 1
-				elif decision[0][0] < 0.5 and label_batch[0][0] == 0:
-					step_accuracy = 1
-				else:
-					step_accuracy = 0
-				accuracy = accuracy + step_accuracy
-				num_step = num_step + 1
-				val_loss += total_loss_value_batch
-			val_loss /= num_step
-			accuracy /= num_step
-
-			print('train_loss:{},   val_loss:{}, 	train_acc:{}, 	val_acc:{}'.format(iter_loss, val_loss, acc, accuracy))
-			saver.save(sess, os.path.join(checkPoint_dir, 'ckp'), global_step=dec_epochs+seg_epochs)
-
 #
-# """--------------------------------------Save Pb from checkpoint------------------------------------------"""
-# checkPoint_dir = 'checkpoint'
-# session = tf.Session()
-# with session.as_default():
+# class DataManager(object):
+# 	def __init__(self, imageList, maskList, shuffle=True):
 #
-# 	image_input = tf.placeholder(tf.float32, shape=(1, 1, IMAGE_SIZE[0], IMAGE_SIZE[1]), name='Image')
-# 	features, logits_pixel, mask = SegmentNet(image_input, 'segment', False, drop_rate=0,
-# 											  data_format=DATA_FORMAT, bn_momentum=0.9)
+# 		self.shuffle = shuffle
+# 		self.image_list = imageList
+# 		self.mask_list = maskList
+# 		self.data_size = len(imageList)
+# 		self.batch_size = 2
+# 		self.number_batch = int(np.floor(len(self.image_list) / self.batch_size))
+# 		self.next_batch = self.get_next()
 #
-# 	logits_class, output_class = DecisionNet(features, mask, 'decision', False,
-# 											 data_format=DATA_FORMAT, bn_momentum=0.9)
+# 	def get_next(self):
+# 		dataset = tf.data.Dataset.from_generator(self.generator, (tf.float32, tf.float32, tf.float32, tf.string))
+# 		dataset = dataset.repeat()
+#
+# 		dataset = dataset.batch(self.batch_size)
+# 		iterator = dataset.make_one_shot_iterator()
+# 		out_batch = iterator.get_next()
+# 		return out_batch
+#
+# 	def generator(self):
+# 		rand_index = np.arange(len(self.image_list))
+# 		np.random.shuffle(rand_index)
+# 		for index in range(len(self.image_list)):
+# 			image_path = self.image_list[rand_index[index]]
+# 			mask_path = self.mask_list[rand_index[index]]
+# 			if image_path.split('/')[-1].split('_')[0] == 'n':
+# 				label = np.array([0.0])
+# 			else:
+# 				label = np.array([1.0])
+#
+# 			image, mask = self.read_data(image_path, mask_path)
+# 			image = image / 255
+# 			mask = mask / 255
+#
+# 			aug_random = np.random.uniform()
+# 			if aug_random > 0.7:
+# 				# adjust_gamma
+# 				if np.random.uniform() > 0.7:
+# 					expo = np.random.choice([0.7, 0.8, 0.9, 1.1, 1.2, 1.3])
+# 					image = exposure.adjust_gamma(image, expo)
+#
+# 				# flip
+# 				if np.random.uniform() > 0.7:
+# 					aug_seed = np.random.randint(-1, 2)
+# 					image = cv2.flip(image, aug_seed)
+# 					mask = cv2.flip(mask, aug_seed)
+#
+# 				# rotae
+# 				if np.random.uniform() > 0.7:
+# 					angle = np.random.randint(-3, 3)
+# 					image = rotate(image, angle)
+# 					mask = rotate(mask, angle)
+#
+# 				# GassianBlur
+# 				if np.random.uniform() > 0.7:
+# 					image = cv2.GaussianBlur(image, (3, 3), 0)
+#
+# 				# shift
+# 				if np.random.uniform() > 0.7:
+# 					dx = np.random.randint(-10, 10)  # width*5%
+# 					dy = np.random.randint(-5, 5)  # Height*10%
+# 					rows, cols = image.shape[:2]
+# 					M = np.float32([[1, 0, dx], [0, 1, dy]])  # (x,y) -> (dx,dy)
+# 					image = cv2.warpAffine(image, M, (cols, rows))
+# 					mask = cv2.warpAffine(mask, M, (cols, rows))
+#
+#
+#
+# 			mask = (np.array(mask[:, :, np.newaxis]))
+# 			image = (np.array(image[np.newaxis, :, :]))
+# 			# image = np.transpose(image, [2, 0, 1])
+#
+# 			yield image, mask, label, image_path
+#
+# 	def read_data(self, image_path, mask_path):
+#
+# 		img = cv2.imread(image_path, 0)  # /255.#read the gray image
+# 		img = cv2.resize(img, (IMAGE_SIZE[1], IMAGE_SIZE[0]))
+# 		msk = cv2.imread(mask_path, 0)  # /255.#read the gray image
+#
+# 		msk = cv2.resize(msk, (IMAGE_SIZE[1], IMAGE_SIZE[0]))
+# 		return img, msk
+#
+#
+# def listData_train(data_dir):
+# 	image_dirs = [x[2] for x in os.walk(data_dir + 'train_image/')][0]
+# 	images_train = []
+# 	masks_train = []
+#
+# 	for i in range(len(image_dirs)):
+# 		image_dir = image_dirs[i]
+# 		image_path = data_dir + 'train_image/' + image_dir
+# 		mask_path = data_dir + 'train_mask/' + image_dir
+# 		images_train.append(image_path)
+# 		masks_train.append(mask_path)
+# 	return images_train, masks_train
+#
+#
+# def listData_val(data_dir):
+# 	image_dirs = [x[2] for x in os.walk(data_dir + 'val_image/')][0]
+# 	images_val = []
+# 	masks_val = []
+#
+# 	for i in range(len(image_dirs)):
+# 		image_dir = image_dirs[i]
+# 		image_path = data_dir + 'val_image/' + image_dir
+# 		mask_path = data_dir + 'val_mask/' + image_dir
+# 		images_val.append(image_path)
+# 		masks_val.append(mask_path)
+# 	return images_val, masks_val
+#
+# def listData_test(data_dir):
+# 	image_dirs = [x[2] for x in os.walk(data_dir + 'val_image/')][0]
+# 	images_val = []
+# 	masks_val = []
+#
+# 	for i in range(len(image_dirs)):
+# 		image_dir = image_dirs[i]
+# 		image_path = data_dir + 'test_image/' + image_dir
+# 		mask_path = data_dir + 'test_mask/' + image_dir
+# 		images_val.append(image_path)
+# 		masks_val.append(mask_path)
+# 	return images_val, masks_val
+#
+#
+# data_dir = "F:/CODES/FAST-SCNN/DATA/1pzt/"
+# image_list_train, mask_list_train = listData_train(data_dir)
+# image_list_valid, mask_list_valid = listData_val(data_dir)
+# image_list_test, mask_list_test = listData_test(data_dir)
+#
+# DataManager_train = DataManager(image_list_train, mask_list_train)
+# DataManager_valid = DataManager(image_list_valid, mask_list_valid, shuffle=False)
+# DataManager_test = DataManager(image_list_test, mask_list_test, shuffle=False)
+
+
+
+"""-----------------------------------------loss----------------------------------------------"""
+
+# sess = tf.Session()
+# checkPoint_dir = "checkpoint"
+# with sess.as_default():
+# 	image_input = tf.placeholder(tf.float32, shape=(2, 1, IMAGE_SIZE[0], IMAGE_SIZE[1]), name='Image')
+# 	label = tf.placeholder(tf.float32, shape=(2, 1), name='Label')
+# 	Mask = tf.placeholder(tf.float32, shape=(2, IMAGE_SIZE[0], IMAGE_SIZE[1], 1), name='mask')
+# 	is_training_seg = tf.placeholder(tf.bool, name='is_training_seg')
+# 	is_training_dec = tf.placeholder(tf.bool, name='is_training_dec')
+#
+# 	features, logits_pixel, mask = SegmentNet(image_input, 'segment', is_training_seg, drop_rate=0,
+# 											  data_format=DATA_FORMAT, bn_momentum=0.999)
+#
+# 	logits_class, output_class = DecisionNet(features, mask, 'decision', is_training_dec,
+# 											 data_format=DATA_FORMAT, bn_momentum=0.999)
 #
 # 	decision_out = tf.nn.sigmoid(logits_class, name='decision_out')
 #
+# 	#        logits_pixel=tf.reshape(logits_pixel,[self.__batch_size,-1])
+# 	#        PixelLabel_reshape=tf.reshape(PixelLabel,[self.__batch_size,-1])
+#
+# 	if DATA_FORMAT == 'channels_first':
+# 		logits_pixel = tf.transpose(logits_pixel, [0, 2, 3, 1])  # NCHW->NHWC
+# 	loss_pixel = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=logits_pixel, labels=Mask))
+# 	loss_class = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=logits_class, labels=label))
+# 	loss_total = loss_pixel + loss_class
+#
+# 	optimizer = tf.train.AdamOptimizer(0.001)
+# 	train_var_list = [v for v in tf.trainable_variables()]
+# 	train_segment_var_list = [v for v in tf.trainable_variables() if 'segment' in v.name]
+# 	train_decision_var_list = [v for v in tf.trainable_variables() if 'decision' in v.name]
+#
+# 	update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+#
+# 	updata_ops_segment = [v for v in update_ops if 'segment' in v.name]
+# 	updata_ops_decision = [v for v in update_ops if 'decision' in v.name]
+#
+# 	with tf.control_dependencies(updata_ops_segment):
+# 		optimize_segment = optimizer.minimize(loss_pixel, var_list=train_segment_var_list)
+#
+# 	with tf.control_dependencies(updata_ops_decision):
+# 		optimize_decision = optimizer.minimize(loss_class, var_list=train_decision_var_list)
+#
+# 	with tf.control_dependencies(update_ops):
+# 		optimize_total = optimizer.minimize(loss_total, var_list=train_var_list)
+#
+# 	sess.run(tf.global_variables_initializer())
 # 	var_list = tf.trainable_variables()
 # 	g_list = tf.global_variables()
 #
@@ -562,25 +468,166 @@ with sess.as_default():
 # 	ckpt = tf.train.latest_checkpoint(checkPoint_dir)
 # 	if ckpt:
 # 		step = int(ckpt.split('-')[1])
-# 		saver.restore(session, ckpt)
+# 		saver.restore(sess, ckpt)
 # 		print('Restoring from epoch:{}'.format(step))
+
+"""-----------------------------------------train  segmentation-----------------------------------------------"""
+# with sess.as_default():
+# 	# sess.run(tf.global_variables_initializer())
+# 	seg_epochs = 5
+# 	print('Start training segmentation for {} epoches'.format(seg_epochs))
+# 	best_loss = 10000
+# 	for i in range(seg_epochs):
+# 		print('Epoch {}:'.format(i))
+# 		with tqdm(total=DataManager_train.number_batch) as pbar:
+# 			iter_loss = 0.0
+# 			num_step = 0.0
+# 			accuracy = 0.0
+# 			for batch in range(DataManager_train.number_batch):
+# 				img_batch, mask_batch, label_batch, _ = sess.run(DataManager_train.next_batch)
 #
+# 				_, loss_value_batch = sess.run([optimize_segment,
+# 												 loss_pixel],
+# 												feed_dict={image_input: img_batch,
+# 														   Mask: mask_batch,
+# 														   label: label_batch,
+# 														   is_training_seg: True,
+# 														   is_training_dec: False})
+# 				iter_loss += loss_value_batch
+# 				num_step = num_step + 1
+# 				pbar.update(1)
+# 		pbar.close()
+# 		iter_loss /= num_step
 #
-# def save_PbModel(session, __pb_model_path):
-# 	input_name = "Image"
-# 	output_name = "decision_out"
-# 	output_node_names = [input_name, output_name]
-# 	output_graph_def = tf.graph_util.convert_variables_to_constants(session,
-# 																	session.graph_def,
-# 																	output_node_names)
-# 	# output_graph_def = tf.graph_util.remove_training_nodes(output_graph_def, protected_nodes=None)
+# 		print('start validing segmentation')
+# 		val_loss = 0.0
+# 		num_step = 0.0
 #
-# 	if not os.path.exists(__pb_model_path):
-# 		os.makedirs(__pb_model_path)
-# 	pbpath = os.path.join(__pb_model_path, 'tensorrt_fastscnn.pb')
-# 	with tf.gfile.GFile(pbpath, mode='wb') as f:
-# 		f.write(output_graph_def.SerializeToString())
+# 		for batch in range(DataManager_valid.number_batch):
+# 			img_batch, mask_batch, label_batch, _ = sess.run(DataManager_valid.next_batch)
 #
+# 			total_loss_value_batch = sess.run(loss_pixel,
+# 											  feed_dict={image_input: img_batch,
+# 														 Mask: mask_batch,
+# 														 label: label_batch,
+# 														 is_training_seg: False,
+# 														 is_training_dec: False})
+# 			num_step = num_step + 1
+# 			val_loss += total_loss_value_batch
+# 		val_loss /= num_step
 #
-# pb_Model_dir = "pbMode"
-# save_PbModel(session, pb_Model_dir)
+# 		print('train_loss:{},   val_loss:{}'.format(iter_loss, val_loss))
+# 		saver.save(sess, os.path.join(checkPoint_dir, 'ckp'), global_step=seg_epochs)
+
+"""-----------------------------------------train  decision----------------------------------------------------------"""
+# with sess.as_default():
+# 	dec_epochs = 1
+# 	with sess.as_default():
+# 		print('Start training decision for {} epoches'.format(dec_epochs))
+# 		best_loss = 10000
+# 		for i in range(0, dec_epochs+0):
+# 			print('Epoch {}:'.format(i))
+# 			with tqdm(total=DataManager_train.number_batch) as pbar:
+# 				iter_loss = 0.0
+# 				num_step = 0.0
+# 				acc = 0
+# 				for batch in range(DataManager_train.number_batch):
+# 					img_batch, mask_batch, label_batch, _ = sess.run(DataManager_train.next_batch)
+#
+# 					_, loss_value_batch, decision = sess.run([optimize_decision,
+# 															  loss_class,
+# 															  decision_out],
+# 												   feed_dict={image_input: img_batch,
+# 															  Mask: mask_batch,
+# 															  label: label_batch,
+# 															  is_training_seg: True,
+# 															  is_training_dec: True})
+# 					# if decision[0][0] >= 0.5 and label_batch[0][0] == 1:
+# 					# 	step_accuracy = 1
+# 					# elif decision[0][0] < 0.5 and label_batch[0][0] == 0:
+# 					# 	step_accuracy = 1
+# 					# else:
+# 					# 	step_accuracy = 0
+# 					# acc = acc + step_accuracy
+# 					# iter_loss += loss_value_batch
+# 					num_step = num_step + 1
+# 					pbar.update(1)
+# 				# iter_loss /= num_step
+# 				# acc /= num_step
+# 			pbar.close()
+#
+# 			print('start validing decision')
+# 			val_loss = 0.0
+# 			num_step = 0.0
+# 			accuracy = 0.0
+# 			for batch in range(DataManager_valid.number_batch):
+# 				img_batch, mask_batch, label_batch, _ = sess.run(DataManager_valid.next_batch)
+#
+# 				total_loss_value_batch, decision = sess.run([loss_class, decision_out],
+# 												  feed_dict={image_input: img_batch,
+# 															 Mask: mask_batch,
+# 															 label: label_batch,
+# 															 is_training_seg: False,
+# 															 is_training_dec: False})
+# 			# 	if decision[0][0] >= 0.5 and label_batch[0][0] == 1:
+# 			# 		step_accuracy = 1
+# 			# 	elif decision[0][0] < 0.5 and label_batch[0][0] == 0:
+# 			# 		step_accuracy = 1
+# 			# 	else:
+# 			# 		step_accuracy = 0
+# 			# 	accuracy = accuracy + step_accuracy
+# 			# 	num_step = num_step + 1
+# 			# 	val_loss += total_loss_value_batch
+# 			# val_loss /= num_step
+# 			# accuracy /= num_step
+#
+# 			# print('train_loss:{},   val_loss:{}, 	train_acc:{}, 	val_acc:{}'.format(iter_loss, val_loss, acc, accuracy))
+# 			saver.save(sess, os.path.join(checkPoint_dir, 'ckp'), global_step=dec_epochs+0)
+
+
+"""--------------------------------------Save Pb from checkpoint------------------------------------------"""
+checkPoint_dir = 'checkpoint'
+session = tf.Session()
+with session.as_default():
+
+	image_input = tf.placeholder(tf.float32, shape=(1, 1, IMAGE_SIZE[0], IMAGE_SIZE[1]), name='Image')
+	features, logits_pixel, mask = SegmentNet(image_input, 'segment', False, drop_rate=0,
+											  data_format=DATA_FORMAT, bn_momentum=0.9)
+
+	logits_class, output_class = DecisionNet(features, mask, 'decision', False,
+											 data_format=DATA_FORMAT, bn_momentum=0.9)
+
+	decision_out = tf.nn.sigmoid(logits_class, name='decision_out')
+
+	var_list = tf.trainable_variables()
+	g_list = tf.global_variables()
+
+	bn_moving_vars = [g for g in g_list if 'moving_mean' in g.name]
+	bn_moving_vars += [g for g in g_list if 'moving_variance' in g.name]
+	var_list += bn_moving_vars
+	saver = tf.train.Saver(var_list)
+	ckpt = tf.train.latest_checkpoint(checkPoint_dir)
+	if ckpt:
+		step = int(ckpt.split('-')[1])
+		saver.restore(session, ckpt)
+		print('Restoring from epoch:{}'.format(step))
+
+
+def save_PbModel(session, __pb_model_path):
+	input_name = "Image"
+	output_name = "decision/Squeeze"
+	output_node_names = [input_name, output_name]
+	output_graph_def = tf.graph_util.convert_variables_to_constants(session,
+																	session.graph_def,
+																	output_node_names)
+	# output_graph_def = tf.graph_util.remove_training_nodes(output_graph_def, protected_nodes=None)
+
+	if not os.path.exists(__pb_model_path):
+		os.makedirs(__pb_model_path)
+	pbpath = os.path.join(__pb_model_path, 'tensorrt_fastscnn1.pb')
+	with tf.gfile.GFile(pbpath, mode='wb') as f:
+		f.write(output_graph_def.SerializeToString())
+
+
+pb_Model_dir = "pbMode"
+save_PbModel(session, pb_Model_dir)

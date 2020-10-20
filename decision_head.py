@@ -1,48 +1,38 @@
 import tensorflow as tf
+from convblock import ConvBatchNormRelu as CBR
+from tensorflow.python.ops import math_ops
+slim=tf.contrib.slim
 
 
-def decision_head(x, y, class_num, scope, keep_dropout_head, training=True, reuse=None, drop_rate=0.2):
+def decision_head(x, y, class_num, scope, keep_dropout_head, training, data_format, momentum, mode, reuse=None, drop_rate=0.2, activation='relu'):
 
 	with tf.variable_scope(scope, reuse=reuse):
 
-		x = tf.concat([x, y], axis=-1)
-		x = tf.layers.conv2d(x, 16, (3, 3), strides=(2, 2), padding='same', name='dec_conv2d1')
-		x = tf.layers.batch_normalization(x, training=training, name='dec_bn1')
-		x = tf.nn.relu(x, name='dec_relu1')
-		x = tf.layers.conv2d(x, 16, (3, 3), strides=(1, 1), padding='same', name='dec_conv2d2')
-		x = tf.layers.batch_normalization(x, training=training, name='dec_bn2')
-		x = tf.nn.relu(x, name='dec_relu2')
+		channel_axis = 1 if data_format == 'channels_first' else -1
 
-		x = tf.layers.conv2d(x, 32, (3, 3), strides=(2, 2), padding='same', name='dec_conv2d3')
-		x = tf.layers.batch_normalization(x, training=training, name='dec_bn3')
-		x = tf.nn.relu(x, name='dec_relu3')
-		x = tf.layers.conv2d(x, 32, (3, 3), strides=(1, 1), padding='same', name='dec_conv2d4')
-		x = tf.layers.batch_normalization(x, training=training, name='dec_bn4')
-		x = tf.nn.relu(x, name='dec_relu4')
-
-		x = tf.layers.conv2d(x, 32, (3, 3), strides=(2, 2), padding='same', name='dec_conv2d5')
+		x = tf.concat([x, y], axis=channel_axis)
+		x = CBR(x, 16, 3, 2, training, momentum, mode, name='CBR1', padding='same', data_format=data_format, activation=activation, bn=True)
+		x = CBR(x, 16, 3, 1, training, momentum, mode, name='CBR2', padding='same', data_format=data_format, activation=activation, bn=True)
+		x = CBR(x, 32, 3, 2, training, momentum, mode, name='CBR3', padding='same', data_format=data_format, activation=activation, bn=True)
+		x = CBR(x, 32, 3, 1, training, momentum, mode, name='CBR4', padding='same', data_format=data_format, activation=activation, bn=True)
+		x = CBR(x, 32, 3, 2, training, momentum, mode, name='CBR5', padding='same', data_format=data_format, activation=None, bn=False)
 
 		# de_glob_ds = tf.keras.layers.DepthwiseConv2D(filters=64, kernel_size=(x.shape[1], x.shape[2]),
 		#                                              strides=(1, 1), name='GlobalDwConv')(x)
 
-		de_max_po = tf.layers.max_pooling2d(x, pool_size=(x.shape[1], x.shape[2]),
-											strides=(1, 1), name='GlobalMaxPooling1')
-		de_avg_po = tf.layers.average_pooling2d(x, pool_size=(x.shape[1], x.shape[2]),
-												strides=(1, 1), name='GlobalAveragePooling1')
-		seg_max_po = tf.layers.max_pooling2d(y, pool_size=(y.shape[1], y.shape[2]),
-											 strides=(1, 1), name='GlobalMaxPooling2')
-		seg_avg_po = tf.layers.average_pooling2d(y, pool_size=(y.shape[1], y.shape[2]),
-												 strides=(1, 1), name='GlobalAveragePooling2')
+		reduction_indices = [1, 2] if data_format == 'channels_last' else [2, 3]
+
+		vector1 = math_ops.reduce_mean(x, reduction_indices, name='pool4', keepdims=True)
+		vector2 = math_ops.reduce_max(x, reduction_indices, name='pool5', keepdims=True)
+		vector3 = math_ops.reduce_mean(y, reduction_indices, name='pool6', keepdims=True)
+		vector4 = math_ops.reduce_max(y, reduction_indices, name='pool7', keepdims=True)
+
 		# de_glob_ds = tf.layers.Flatten(name='dec_flatten0')(de_glob_ds)
-		de_max_po = tf.layers.Flatten(name='dec_flatten1')(de_max_po)
-		de_avg_po = tf.layers.Flatten(name='dec_flatten2')(de_avg_po)
-		seg_max_po = tf.layers.Flatten(name='dec_flatten3')(seg_max_po)
-		seg_avg_po = tf.layers.Flatten(name='dec_faltten4')(seg_avg_po)
+		vector = tf.concat([vector1, vector2, vector3, vector4], axis=channel_axis)
+		vector = tf.squeeze(vector, axis=reduction_indices)
 
-		x = tf.concat([de_max_po, de_avg_po, seg_max_po, seg_avg_po], axis=-1)
 		if keep_dropout_head:
-			x = tf.nn.dropout(x, keep_prob=1-drop_rate)
-		x = tf.layers.dense(x, class_num)
-		# x = tf.keras.layers.Dense(class_num, use_bias=False)(x)
+			vector = tf.nn.dropout(vector, keep_prob=1-drop_rate)
+		logits = slim.fully_connected(vector, class_num, activation_fn=None)
 
-		return x
+		return logits

@@ -92,11 +92,7 @@ def build_fast_scnn(input_tensor, scope, is_training, keep_dropout_backbone):
 
 		seg_fea = conv_block(classifier, 'conv', 1, (1, 1), strides=(1, 1), padding='same', relu=False)
 		if keep_dropout_backbone:
-			seg_out = tf.keras.layers.Dropout(0.3)(seg_fea)
-		else:
-			seg_out = seg_fea
-		seg_out = tf.keras.layers.UpSampling2D((8, 8))(seg_out)
-		seg_out = tf.keras.layers.Activation('sigmoid')(seg_out)
+			seg_fea = tf.keras.layers.Dropout(0.3)(seg_fea)
 
-	return [classifier, seg_fea, seg_out]
+	return [classifier, seg_fea]
 
